@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { identifyItemsInImage } from '../services/geminiService';
 import Card from './common/Card';
 import Button from './common/Button';
@@ -16,6 +16,12 @@ const InventoryScanner: React.FC<InventoryScannerProps> = ({ onInventoryUpdate }
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [scannedItems, setScannedItems] = useState<{name: AllowedItemName, quantity: number}[]>([]);
+
+  // New state and refs for camera functionality
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [stream, setStream] = useState<MediaStream | null>(null);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -56,39 +62,118 @@ const InventoryScanner: React.FC<InventoryScannerProps> = ({ onInventoryUpdate }
     }
   }, [selectedFile, onInventoryUpdate]);
 
+  // Camera handling functions
+  const openCamera = async () => {
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      try {
+        const mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        setStream(mediaStream);
+        setIsCameraOpen(true);
+        if (videoRef.current) {
+          videoRef.current.srcObject = mediaStream;
+        }
+      } catch (err) {
+        console.error("Error accessing camera: ", err);
+        setError("Could not access camera. Please ensure permissions are granted.");
+      }
+    } else {
+      setError("Camera not supported on this device.");
+    }
+  };
+
+  const closeCamera = () => {
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+    }
+    setStream(null);
+    setIsCameraOpen(false);
+    setError(null);
+  };
+
+  const takePhoto = () => {
+    if (videoRef.current && canvasRef.current) {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const context = canvas.getContext('2d');
+      if (context) {
+        context.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
+        const dataUrl = canvas.toDataURL('image/png');
+        setPreviewUrl(dataUrl);
+        canvas.toBlob(blob => {
+          if (blob) {
+            setSelectedFile(new File([blob], "capture.png", { type: "image/png" }));
+            setScannedItems([]);
+          }
+        }, 'image/png');
+        closeCamera();
+      }
+    }
+  };
+
+  // Effect to clean up camera stream on unmount
+  useEffect(() => {
+    return () => {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, [stream]);
+
   return (
     <Card>
       <div className="text-center">
         <h2 className="text-2xl font-bold text-white">Inventory Vision Scanner</h2>
-        <p className="text-slate-400 mt-2">Upload a picture of your pantry or fridge to automatically update your inventory.</p>
+        <p className="text-slate-400 mt-2">Upload a picture or use your camera to automatically update your inventory.</p>
       </div>
 
-      <div className="mt-6 flex flex-col items-center">
-        {!previewUrl ? (
-            <label htmlFor="file-upload" className="relative block w-full rounded-lg border-2 border-dashed border-slate-600 p-12 text-center hover:border-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-slate-900 cursor-pointer">
-                {ICONS.placeholder}
-                <span className="mt-2 block text-sm font-medium text-slate-300">
-                    Drag & drop an image, or click to upload
-                </span>
-                <input id="file-upload" type="file" accept="image/*" className="sr-only" onChange={handleFileChange} />
-            </label>
-        ) : (
-            <div className="mt-6 flex flex-col items-center justify-center">
-                <img src={previewUrl} alt="Inventory preview" className="max-h-64 rounded-lg shadow-lg border-2 border-slate-700" />
-                 <label htmlFor="file-upload" className="mt-4 cursor-pointer bg-slate-700 hover:bg-slate-600 text-white font-bold py-2 px-4 rounded-lg inline-flex items-center transition-colors">
-                    {ICONS.upload}
-                    <span>Change Image</span>
+      {isCameraOpen ? (
+        <div className="mt-6 flex flex-col items-center">
+          <video ref={videoRef} autoPlay playsInline className="w-full max-w-lg rounded-lg shadow-lg border-2 border-slate-700"></video>
+          <canvas ref={canvasRef} className="hidden"></canvas>
+          <div className="mt-4 flex space-x-4">
+            <Button onClick={takePhoto}>Take Photo</Button>
+            <Button onClick={closeCamera} className="!bg-slate-600 hover:!bg-slate-700">Close Camera</Button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="mt-6 flex flex-col items-center">
+            {!previewUrl ? (
+                <label htmlFor="file-upload" className="relative block w-full rounded-lg border-2 border-dashed border-slate-600 p-12 text-center hover:border-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-slate-900 cursor-pointer">
+                    {ICONS.placeholder}
+                    <span className="mt-2 block text-sm font-medium text-slate-300">
+                        Drag & drop an image, or click to upload
+                    </span>
+                    <input id="file-upload" type="file" accept="image/*" className="sr-only" onChange={handleFileChange} />
                 </label>
-                 <input id="file-upload" type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
-            </div>
-        )}
-      </div>
-      
-      <div className="mt-6 text-center">
-        <Button onClick={handleScan} disabled={!selectedFile || isLoading}>
-          {isLoading ? <Spinner /> : 'Scan Inventory'}
-        </Button>
-      </div>
+            ) : (
+                <div className="mt-6 flex flex-col items-center justify-center">
+                    <img src={previewUrl} alt="Inventory preview" className="max-h-64 rounded-lg shadow-lg border-2 border-slate-700" />
+                     <label htmlFor="file-upload" className="mt-4 cursor-pointer bg-slate-700 hover:bg-slate-600 text-white font-bold py-2 px-4 rounded-lg inline-flex items-center transition-colors">
+                        {ICONS.upload}
+                        <span>Change Image</span>
+                    </label>
+                     <input id="file-upload" type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
+                </div>
+            )}
+          </div>
+          
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-4">
+            <Button onClick={handleScan} disabled={!selectedFile || isLoading}>
+              {isLoading ? <Spinner /> : 'Scan Inventory'}
+            </Button>
+            <Button onClick={openCamera} disabled={isLoading} className="!bg-purple-600 hover:!bg-purple-700 focus:!ring-purple-500">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+              Use Camera
+            </Button>
+          </div>
+        </>
+      )}
 
       {error && <p className="text-red-400 text-center mt-4">{error}</p>}
 
