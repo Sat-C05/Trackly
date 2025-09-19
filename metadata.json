@@ -1,0 +1,5 @@
+{
+  "name": "Trackly",
+  "description": "An intelligent agent that uses computer vision to track essential household inventory (rice, milk, eggs, oil, bread), learns consumption patterns to forecast usage, and automatically generates shopping lists to manage supplies proactively.",
+  "requestFramePermissions": []
+}
